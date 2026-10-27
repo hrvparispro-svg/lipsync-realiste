@@ -1,5 +1,19 @@
 name: Bodi - Video Auto
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: 'Sujet toxicité au travail'
+        type: choice
+        options:
+          - 'Le manager qui micro-manage tout'
+          - 'Les collègues qui parlent dans ton dos'
+          - 'On te donne tout le travail ingrat'
+          - 'Le manager qui ne dit jamais merci'
+          - 'Comment poser ses limites sans culpabiliser'
+          - 'Cest de la toxicité ou juste de la maladresse ?'
+          - 'Le manager qui te fait douter de toi'
+        default: 'Le manager qui te fait douter de toi'
 
 jobs:
   video:
@@ -7,31 +21,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Génère audio Bodi Tutor
+      - name: Génère script + audio Bodi Tutor
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          THEME_INPUT: ${{ inputs.theme }}
         run: |
           pip install -q google-genai
           python scripts/generate_bodi.py
 
-      - name: Lip-sync HD
+      - name: Lip-sync HD sur ton Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          pip install -q gradio_client huggingface_hub
+          pip install -q gradio_client
           python - << 'PY'
           from gradio_client import Client
-          import shutil, os
-          # Remplace par ton username HF si différent
-          HF_SPACE = "hrvparispro/LatentSync"  
-          print(f"Connexion à {HF_SPACE}")
+          import shutil
+          import os
+          HF_SPACE = "nailahrv/LatentSync"
+          print(f"Connexion à {HF_SPACE}...")
           client = Client(HF_SPACE, hf_token=os.environ["HF_TOKEN"])
+          print("Envoi video + audio Bodi...")
           result = client.predict("inputs/video.mp4", "inputs/audio.wav", api_name="/predict")
           shutil.move(result, "bodi_final.mp4")
-          print("Vidéo OK")
+          print("✅ Vidéo finale prête")
           PY
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload video finale
+        uses: actions/upload-artifact@v4
         with:
           name: video-bodi-finale
-          path: bodi_final.mp4
+          path: |
+            bodi_final.mp4
+            script_du_jour.txt
