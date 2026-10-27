@@ -3,18 +3,28 @@ from google import genai
 from google.genai import types
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-theme = os.environ.get("THEME_INPUT", "Le manager toxique qui te fait douter de toi")
+theme = os.environ.get("THEME_INPUT", "manager toxique")
 
-prompt = f"Tu es Bodi, coach bienveillant. Ecris un script de 50s max en francais parle naturel. Sujet : {theme}. Structure : Hook 3s, 2 signes concrets, 1 validation 'Ce n est pas toi le probleme', 1 conseil protecteur. Ton : pose, rassurant, tutor. Juste le texte a dire."
+p = f"Tu es Bodi coach. Script 50s francais sur {theme}. Hook, 2 signes, 1 conseil. Ton pose."
 
-resp = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
-script = resp.text.strip()
-print(f"SCRIPT: {script}")
+r = client.models.generate_content(model="gemini-3.8-flash", contents=p)
+script = r.text.strip()
 
-with open("script_du_jour.txt", "w", encoding="utf-8") as f:
-    f.write(script)
-
+open("script_du_jour.txt","w",encoding="utf-8").write(script)
 os.makedirs("inputs", exist_ok=True)
 
-audio_resp = client.models.generate_content(
-    model="gem
+a = client.models.generate_content(
+ model="gemini-2.5-flash-preview-tts",
+ contents=script,
+ config=types.GenerateContentConfig(
+  response_modalities=["AUDIO"],
+  speech_config=types.SpeechConfig(
+   voice_config=types.VoiceConfig(
+    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Kore")
+   )
+  )
+ )
+)
+
+data = a.candidates[0].content.parts[0].inline_data.data
+open("inputs/audio.wav","wb").write(data)
