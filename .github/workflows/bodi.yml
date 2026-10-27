@@ -1,0 +1,37 @@
+name: Bodi - Video Auto
+on: workflow_dispatch
+
+jobs:
+  video:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Génère audio Bodi Tutor
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          pip install -q google-genai
+          python scripts/generate_bodi.py
+
+      - name: Lip-sync HD
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install -q gradio_client huggingface_hub
+          python - << 'PY'
+          from gradio_client import Client
+          import shutil, os
+          # Remplace par ton username HF si différent
+          HF_SPACE = "hrvparispro/LatentSync"  
+          print(f"Connexion à {HF_SPACE}")
+          client = Client(HF_SPACE, hf_token=os.environ["HF_TOKEN"])
+          result = client.predict("inputs/video.mp4", "inputs/audio.wav", api_name="/predict")
+          shutil.move(result, "bodi_final.mp4")
+          print("Vidéo OK")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video-bodi-finale
+          path: bodi_final.mp4
