@@ -1,42 +1,47 @@
-name: Bodi Toxicité Auto
+name: Bodi - Toxicité Auto
 on:
   workflow_dispatch:
     inputs:
       theme:
-        description: 'Thème de la vidéo'
-        default: 'Toxicité par les collègues : rumeurs et exclusion'
-        required: true
+        description: 'Quel sujet de toxicité ?'
+        type: choice
+        options:
+          - 'Le manager qui micro-manage tout'
+          - 'Les collègues qui parlent dans ton dos'
+          - 'On te donne tout le travail ingrat'
+          - 'Le manager qui ne dit jamais merci'
+          - 'Comment poser ses limites sans culpabiliser'
+          - 'Cest de la toxicité ou juste de la maladresse ?'
+        default: 'Le manager qui micro-manage tout'
 
 jobs:
-  bodi-video:
+  create-video:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Génère script + audio Bodi
+      - name: Génère Bodi
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          THEME_INPUT: ${{ inputs.theme }}
         run: |
-          mkdir -p inputs
           pip install -q google-genai
           python scripts/generate_bodi.py
-
-      - name: Lip-sync HD sur HF
+      - name: Lip-sync HD
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USER: ${{ secrets.HF_USER }} # Ton username HF
         run: |
           pip install -q gradio_client
-          python - << 'PY'
+          python -c "
           from gradio_client import Client
           import shutil, os
-          client = Client(f"{os.environ['HF_USER']}/LatentSync", hf_token=os.environ['HF_TOKEN'])
-          result = client.predict("inputs/video.mp4", "inputs/audio.wav", api_name="/predict")
-          shutil.move(result, "bodi_final.mp4")
-          PY
-
+          c = Client(f\"{os.environ['HF_USER']}/LatentSync\", hf_token=os.environ['HF_TOKEN'])
+          r = c.predict('inputs/video.mp4', 'inputs/audio.wav', api_name='/predict')
+          shutil.move(r, 'bodi_final.mp4')
+          "
       - uses: actions/upload-artifact@v4
         with:
-          name: bodi-video-toxicite
+          name: video-bodi
           path: |
             bodi_final.mp4
             script_du_jour.txt
