@@ -1,32 +1,42 @@
-name: LipSync Realiste HD
+name: Bodi Toxicité Auto
 on:
   workflow_dispatch:
-  push:
-    paths: ['inputs/**']
+    inputs:
+      theme:
+        description: 'Thème de la vidéo'
+        default: 'Toxicité par les collègues : rumeurs et exclusion'
+        required: true
 
 jobs:
-  lipsync:
+  bodi-video:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run on HF GPU
+      
+      - name: Génère script + audio Bodi
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          mkdir -p inputs
+          pip install -q google-genai
+          python scripts/generate_bodi.py
+
+      - name: Lip-sync HD sur HF
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          pip install gradio_client -q
+          pip install -q gradio_client
           python - << 'PY'
           from gradio_client import Client
-          # Mets ici le lien de TON Space que tu as dupliqué
-          client = Client("TON_USERNAME/LatentSync", hf_token="${{ secrets.HF_TOKEN }}".strip())
-          result = client.predict(
-            "inputs/video.mp4",
-            "inputs/audio.wav",
-            api_name="/predict"
-          )
-          import shutil
-          shutil.move(result, "final_1080p.mp4")
+          import shutil, os
+          client = Client(f"{os.environ['HF_USER']}/LatentSync", hf_token=os.environ['HF_TOKEN'])
+          result = client.predict("inputs/video.mp4", "inputs/audio.wav", api_name="/predict")
+          shutil.move(result, "bodi_final.mp4")
           PY
+
       - uses: actions/upload-artifact@v4
         with:
-          name: video-finale
-          path: final_1080p.mp4
+          name: bodi-video-toxicite
+          path: |
+            bodi_final.mp4
+            script_du_jour.txt
