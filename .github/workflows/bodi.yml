@@ -1,12 +1,12 @@
-name: Bodi - Video Auto
+name: Bodi - Video Auto 1min
 
 on:
   workflow_dispatch:
     inputs:
       theme:
-        description: 'Theme'
+        description: 'Theme de la video Bodi'
         required: false
-        default: 'manager toxique'
+        default: 'Le manager toxique qui te fait douter'
 
 jobs:
   video:
@@ -19,34 +19,53 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 1 - Genere audio Bodi 3.8 TTS
+      - name: 1 - Genere script + audio Bodi 3.8 TTS 1min
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           THEME_INPUT: ${{ inputs.theme }}
         run: |
-          pip install -q google-genai
+          sudo apt-get update -y -q
+          sudo apt-get install -y -q ffmpeg
+          pip install -q google-genai pydub
           python scripts/generate_bodi.py
 
-      - name: 2 - Lip-sync local (plus de Space)
+      - name: 2 - Lip-sync local sans Space HF
         run: |
           pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install -q opencv-python-headless ffmpeg-python gradio_client huggingface_hub imageio
+          pip install -q opencv-python-headless imageio ffmpeg-python huggingface_hub
           git clone https://github.com/bytedance/LatentSync.git
-          mkdir -p LatentSync/checkpoints inputs outputs
+          mkdir -p LatentSync/checkpoints outputs
           
-          # Telecharge poids 1.5 (1.2Go)
           python - << 'PY'
           from huggingface_hub import hf_hub_download
+          print("Telechargement poids LatentSync 1.5...")
           hf_hub_download(repo_id="ByteDance/LatentSync", filename="latentsync_1.5.pt", local_dir="LatentSync/checkpoints")
+          # fix path
+          import os, shutil
+          src = "LatentSync/checkpoints/checkpoints/latentsync_1.5.pt"
+          dst = "LatentSync/checkpoints/latentsync_1.5.pt"
+          if os.path.exists(src):
+              shutil.move(src, dst)
           PY
           
-          # Convertit audio wav -> pour LatentSync
+          # Audio 16k pour LatentSync + boucle video si ta video est trop courte
           ffmpeg -i inputs/audio.wav -ar 16000 inputs/audio_16k.wav -y
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 inputs/audio_16k.wav > dur.txt
+          cat dur.txt
+          # Si video.mp4 fait 10s, on la boucle pour couvrir l'audio 70s
+          ffmpeg -stream_loop 10 -i inputs/video.mp4 -c copy inputs/video_loop.mp4 -y
           
-          python LatentSync/inference.py --inference_ckpt_path LatentSync/checkpoints/latentsync_1.5.pt --video_path inputs/video.mp4 --audio_path inputs/audio_16k.wav --output_path outputs/final.mp4
+          python LatentSync/inference.py \
+            --inference_ckpt_path LatentSync/checkpoints/latentsync_1.5.pt \
+            --video_path inputs/video_loop.mp4 \
+            --audio_path inputs/audio_16k.wav \
+            --output_path outputs/final.mp4
 
-      - name: Upload video finale
+      - name: Upload video finale 1min
         uses: actions/upload-artifact@v4
         with:
-          name: video-bodi-finale
-          path: outputs/final.mp4
+          name: video-bodi-1min-finale
+          path: |
+            outputs/final.mp4
+            script_du_jour.txt
+            inputs/audio.wav
