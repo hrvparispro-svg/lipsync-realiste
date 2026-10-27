@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       theme:
-        description: 'Theme video'
+        description: 'Theme'
         required: false
-        default: 'Le manager toxique'
+        default: 'manager toxique'
 
 jobs:
   video:
@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Génère script + audio Bodi Tutor
+      - name: 1 - Genere audio Bodi 3.8 TTS
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           THEME_INPUT: ${{ inputs.theme }}
@@ -27,31 +27,23 @@ jobs:
           pip install -q google-genai
           python scripts/generate_bodi.py
 
-      - name: Lip-sync HD sur ton Space
+      - name: 2 - Lip-sync local (plus de Space)
         run: |
-          pip install -q gradio_client huggingface_hub
+          pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -q opencv-python-headless ffmpeg-python gradio_client huggingface_hub imageio
+          git clone https://github.com/bytedance/LatentSync.git
+          mkdir -p LatentSync/checkpoints inputs outputs
+          
+          # Telecharge poids 1.5 (1.2Go)
           python - << 'PY'
-          from gradio_client import Client
-          import shutil, os
-          
-          print("Connexion à nailahrv/LatentSync...")
-          # CORRECTION 2026: plus de hf_token
-          client = Client("nailahrv/LatentSync")
-          
-          # Appel
-          result = client.predict(
-              video="inputs/video.mp4",
-              audio="inputs/audio.wav",
-              api_name="/predict"
-          )
-          print(f"Result: {result}")
-          # Copie vers outputs
-          os.makedirs("outputs", exist_ok=True)
-          if isinstance(result, str):
-              shutil.copy(result, "outputs/final.mp4")
-          else:
-              shutil.copy(result[0], "outputs/final.mp4")
+          from huggingface_hub import hf_hub_download
+          hf_hub_download(repo_id="ByteDance/LatentSync", filename="latentsync_1.5.pt", local_dir="LatentSync/checkpoints")
           PY
+          
+          # Convertit audio wav -> pour LatentSync
+          ffmpeg -i inputs/audio.wav -ar 16000 inputs/audio_16k.wav -y
+          
+          python LatentSync/inference.py --inference_ckpt_path LatentSync/checkpoints/latentsync_1.5.pt --video_path inputs/video.mp4 --audio_path inputs/audio_16k.wav --output_path outputs/final.mp4
 
       - name: Upload video finale
         uses: actions/upload-artifact@v4
