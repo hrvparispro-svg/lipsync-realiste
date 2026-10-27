@@ -1,0 +1,32 @@
+name: LipSync Realiste HD
+on:
+  workflow_dispatch:
+  push:
+    paths: ['inputs/**']
+
+jobs:
+  lipsync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run on HF GPU
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install gradio_client -q
+          python - << 'PY'
+          from gradio_client import Client
+          # Mets ici le lien de TON Space que tu as dupliqué
+          client = Client("TON_USERNAME/LatentSync", hf_token="${{ secrets.HF_TOKEN }}".strip())
+          result = client.predict(
+            "inputs/video.mp4",
+            "inputs/audio.wav",
+            api_name="/predict"
+          )
+          import shutil
+          shutil.move(result, "final_1080p.mp4")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video-finale
+          path: final_1080p.mp4
