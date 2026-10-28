@@ -1,4 +1,4 @@
-name: Bodi - Voix Homme Garantie
+name: Bodi - Voix Homme Garantie SANS 503
 
 on:
   workflow_dispatch:
@@ -17,94 +17,88 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 1 - Audio HOMME garanti (Gemini + fallback Edge)
+      - name: 1 - Script + Audio HOMME garanti
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           THEME_INPUT: ${{ inputs.theme }}
         run: |
           sudo apt-get update -y -q
           sudo apt-get install -y -q ffmpeg
-          pip install -q google-genai pydub edge-tts
+          pip install -q google-genai edge-tts
           mkdir -p inputs outputs
-          python - << 'PY'
-          import os, time, asyncio, re, io
-          from google import genai
-          from google.genai import types
-          from pydub import AudioSegment
 
-          async def edge_tts_fallback(text, voice="fr-FR-HenriNeural"):
-              # Henri = homme francais, garantit 100%
+          # 1a - Script avec gemini flash (pas TTS, donc pas de 503)
+          python - << 'PY'
+          import os
+          from google import genai
+          client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+          theme = os.environ.get("THEME_INPUT","manager toxique")
+          r = client.models.generate_content(model="gemini-3.8-flash", contents=f"Ecris 70s, 160 mots, francais oral sur {theme}. Hook + 3 signes + validation + conseil concret. Phrases courtes.")
+          script = r.text.strip()
+          open("script_du_jour.txt","w",encoding="utf-8").write(script)
+          print(f"SCRIPT OK: {script[:120]}...")
+          PY
+
+          # 1b - Audio HOMME avec fallback automatique, ne plante JAMAIS avec exit 1
+          python - << 'PY'
+          import asyncio, os
+
+          async def gen_audio():
+              text = open("script_du_jour.txt",encoding="utf-8").read()
+              # On tente Gemini 1 seule fois, si 503 on bascule direct
+              try:
+                  from google import genai
+                  from google.genai import types
+                  client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+                  print("Tentative Gemini Charon HOMME...")
+                  resp = client.models.generate_content(
+                      model="gemini-3.8-flash-lite-tts",
+                      contents=text,
+                      config=types.GenerateContentConfig(
+                          response_modalities=["AUDIO"],
+                          speech_config=types.SpeechConfig(
+                              voice_config=types.VoiceConfig(
+                                  prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Charon")
+                              )
+                          )
+                      )
+                  )
+                  open("inputs/audio.wav","wb").write(resp.candidates[0].content.parts[0].inline_data.data)
+                  print("✅ Audio Gemini Charon OK")
+                  return
+              except Exception as e:
+                  print(f"Gemini 503 surcharge -> {e}")
+                  print("Bascule vers voix HOMME Edge-TTS (fr-FR-HenriNeural) qui ne fait jamais 503...")
+
+              # FALLBACK GARANTI HOMME
               import edge_tts
-              print(f"Fallback Edge-TTS avec voix homme {voice}...")
+              # Henri = homme francais mature, Remy = homme jeune
+              voice = "fr-FR-HenriNeural"
               communicate = edge_tts.Communicate(text, voice)
               await communicate.save("inputs/audio.wav")
-              print(f"✅ Audio homme Edge-TTS OK")
+              print(f"✅ Audio HOMME Edge-TTS {voice} OK")
 
-          async def main():
-              client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-              theme = os.environ.get("THEME_INPUT","manager toxique")
-              r = client.models.generate_content(model="gemini-3.8-flash", contents=f"Ecris 70s, 160 mots, francais oral sur {theme}. Hook + 3 signes + validation + conseil.")
-              script = r.text.strip()
-              open("script_du_jour.txt","w",encoding="utf-8").write(script)
-              print(f"SCRIPT: {script}")
-
-              sentences = re.split(r'(?<=[.!?])\s+', script)
-              mid=len(sentences)//2
-              chunks = [" ".join(sentences[:mid]), " ".join(sentences[mid:])]
-              chunks=[c for c in chunks if c.strip()]
-
-              VOICE="Charon"
-              MODELS=["gemini-3.8-flash-tts","gemini-3.8-flash-lite-tts","gemini-2.5-flash-preview-tts"]
-              full_audio = AudioSegment.empty()
-              gemini_ok=False
-
-              try:
-                  for chunk in chunks:
-                      chunk_ok=False
-                      for model_name in MODELS:
-                          for attempt in range(3):
-                              try:
-                                  print(f"Gemini {model_name} tentative {attempt+1}...")
-                                  resp = client.models.generate_content(model=model_name, contents=chunk, config=types.GenerateContentConfig(response_modalities=["AUDIO"], speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE)))))
-                                  data = resp.candidates[0].content.parts[0].inline_data.data
-                                  seg = AudioSegment.from_file(io.BytesIO(data))
-                                  full_audio += seg + AudioSegment.silent(duration=150)
-                                  chunk_ok=True
-                                  break
-                              except Exception as e:
-                                  msg=str(e)
-                                  print(f"  -> {msg[:150]}")
-                                  if "503" in msg or "UNAVAILABLE" in msg or "RemoteProtocolError" in msg or "disconnected" in msg:
-                                      wait=20*(attempt+1)
-                                      print(f"  Serveur surcharge, attente {wait}s...")
-                                      time.sleep(wait)
-                                      continue
-                                  time.sleep(5)
-                          if chunk_ok: break
-                      if not chunk_ok: raise Exception("Gemini KO sur ce chunk")
-                  full_audio.export("inputs/audio.wav", format="wav")
-                  gemini_ok=True
-                  print("✅ Audio Gemini HOMME OK")
-              except Exception as e:
-                  print(f"Gemini 3.8 surcharge totale ({e}), on passe en voix homme Edge-TTS gratuite...")
-                  await edge_tts_fallback(script, voice="fr-FR-HenriNeural")
-
-          asyncio.run(main())
+          asyncio.run(gen_audio())
           PY
+
           ls -lh inputs/audio.wav
           ffprobe -v error -show_entries stream=duration -of default=noprint_wrappers=1 inputs/audio.wav
 
-      - name: 2 - Video avec nouvelle voix homme + lip-sync
+      - name: 2 - Video finale avec NOUVELLE voix homme (supprime ancienne)
         run: |
+          # -an supprime DEFINITIVEMENT ta voix d'origine
           ffmpeg -y -stream_loop 10 -i inputs/video.mp4 -t 80 -an -c:v libx264 -pix_fmt yuv420p inputs/video_mute.mp4
+          # colle nouvelle voix homme
           ffmpeg -y -i inputs/video_mute.mp4 -i inputs/audio.wav -c:v copy -c:a aac -shortest outputs/final.mp4
-          echo "Video avec voix HOMME garantie, sans ancienne voix"
-          
+          ls -lh outputs/final.mp4
+          echo "✅ Video avec voix HOMME, sans ton ancienne voix"
+
+          # Lip-sync optionnel (ne fait plus planter)
           pip install -q gradio_client || true
-          python - << 'PY'
+          python - << 'PY' || true
+          from gradio_client import Client, handle_file
+          import shutil
           try:
-              from gradio_client import Client, handle_file
-              import shutil
               client = Client("AIGODLIKE-COM/Wav2Lip")
               result = client.predict(handle_file("inputs/video_mute.mp4"), handle_file("inputs/audio.wav"))
               out = result[0] if isinstance(result, list) else result
@@ -112,13 +106,13 @@ jobs:
               shutil.copy(out, "outputs/final_lipsync.mp4")
               print("✅ Lip-sync OK")
           except Exception as e:
-              print(f"Lip-sync HS, mais final.mp4 a deja la voix homme: {e}")
+              print(f"Lip-sync off, mais final.mp4 a deja la voix homme: {e}")
           PY
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: video-bodi-homme-garanti
+          name: video-bodi-homme-fixe
           path: |
             outputs/
             script_du_jour.txt
