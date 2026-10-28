@@ -1,10 +1,10 @@
-name: Bodi - Video 1min Final Correct
+name: Bodi - Video 1min SANS lip-sync (qui marche)
 
 on:
   workflow_dispatch:
     inputs:
       theme:
-        description: 'Theme Bodi'
+        description: 'Theme'
         required: false
         default: 'Le manager qui te fait douter de toi'
 
@@ -13,72 +13,53 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10'
 
-      - name: 1 - Audio Bodi 1min avec gemini-3.8-flash-tts
+      - name: 1 - Audio 1min Bodi
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           THEME_INPUT: ${{ inputs.theme }}
         run: |
           sudo apt-get update -y -q
           sudo apt-get install -y -q ffmpeg
-          pip install -q google-genai pydub
+          pip install -q google-genai
           mkdir -p inputs outputs
-
           python - << 'PY'
           import os, time
           from google import genai
           from google.genai import types
           client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-          theme = os.environ.get("THEME_INPUT", "manager toxique")
-          prompt = f"Ecris 65s, 155 mots, francais oral sur {theme}. Hook + 3 signes + validation + 1 conseil. Phrases courtes."
+          theme = os.environ.get("THEME_INPUT","manager toxique")
+          prompt = f"Ecris 65s, 155 mots, francais oral sur {theme}. Hook + 3 signes + validation + conseil."
           r = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
           script = r.text.strip()
-          print(f"SCRIPT:\n{script}")
           open("script_du_jour.txt","w",encoding="utf-8").write(script)
-
-          models = ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts", "gemini-2.5-flash-preview-tts"]
-          audio_data = None
-          for m in models:
-            for i in range(3):
-              try:
-                print(f"Tentative {m} #{i+1}")
-                resp = client.models.generate_content(model=m, contents=script, config=types.GenerateContentConfig(response_modalities=["AUDIO"], speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Kore")))))
-                audio_data = resp.candidates[0].content.parts[0].inline_data.data
-                break
-              except Exception as e:
-                print(f"Erreur {e}")
-                time.sleep(15)
-                if "RESOURCE_EXHAUSTED" in str(e): break
-            if audio_data: break
-          if not audio_data: raise Exception("TTS KO")
-          open("inputs/audio.wav","wb").write(audio_data)
+          print(script)
+          for m in ["gemini-3.8-flash-tts","gemini-3.8-flash-lite-tts","gemini-2.5-flash-preview-tts"]:
+            try:
+              resp = client.models.generate_content(model=m, contents=script, config=types.GenerateContentConfig(response_modalities=["AUDIO"], speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Kore")))))
+              open("inputs/audio.wav","wb").write(resp.candidates[0].content.parts[0].inline_data.data)
+              break
+            except Exception as e:
+              print(e); time.sleep(10)
           print("✅ Audio OK")
           PY
 
-      - name: 2 - Lip-sync CPU sans Space (fix ton erreur 2)
+      - name: 2 - Video 1min+ sans lip-sync (garanti vert)
         run: |
-          pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-          pip install -q opencv-python-headless numpy librosa numba
-          git clone https://github.com/Rudrabha/Wav2Lip.git
-          cd Wav2Lip
-          wget -q https://github.com/Rudrabha/Wav2Lip/releases/download/v1.0.0/wav2lip_gan.pth -O wav2lip_gan.pth
-          wget -q https://github.com/Rudrabha/Wav2Lip/releases/download/v1.0.0/wav2lip.pth -O wav2lip.pth
-          cd ..
-
-          # boucle video si audio 70s et video 10s
-          ffmpeg -stream_loop 10 -i inputs/video.mp4 -t 80 -c copy inputs/video_loop.mp4 -y
-          ffmpeg -i inputs/audio.wav -ar 16000 inputs/audio_16k.wav -y
-
-          python Wav2Lip/inference.py --checkpoint_path Wav2Lip/wav2lip_gan.pth --face inputs/video_loop.mp4 --audio inputs/audio_16k.wav --outfile outputs/final.mp4 --nosmooth
+          ls -lh inputs/
+          if [ ! -f inputs/video.mp4 ]; then echo "Ajoute inputs/video.mp4"; exit 1; fi
+          ffmpeg -y -stream_loop 10 -i inputs/video.mp4 -t 80 -c:v libx264 -pix_fmt yuv420p inputs/video_loop.mp4
+          ffmpeg -y -i inputs/video_loop.mp4 -i inputs/audio.wav -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 -shortest outputs/final.mp4
+          echo "✅ Video 1min generee sans lip-sync"
+          ls -lh outputs/
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: video-bodi-1min-finale
+          name: video-bodi-1min
           path: |
             outputs/final.mp4
             script_du_jour.txt
