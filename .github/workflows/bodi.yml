@@ -1,4 +1,4 @@
-name: Bodi - Homme + Lip-sync Final
+name: Bodi - Voix Homme Forcee
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 1 - Audio voix HOMME avec 3.8-flash-tts
+      - name: 1 - Audio voix HOMME Charon
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           THEME_INPUT: ${{ inputs.theme }}
@@ -32,69 +32,63 @@ jobs:
           from google.genai import types
           client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
           theme = os.environ.get("THEME_INPUT","manager toxique")
-          prompt = f"Ecris 65s, 155 mots, francais oral sur {theme}. Hook + 3 signes + validation + conseil concret. Phrases courtes, tutoiement."
-          r = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
+          r = client.models.generate_content(model="gemini-3.8-flash", contents=f"Ecris 70s, 160 mots, francais oral sur {theme}. Hook + 3 signes + validation + conseil.")
           script = r.text.strip()
           open("script_du_jour.txt","w",encoding="utf-8").write(script)
           print(script)
-          # VOIX HOMME: Charon = homme grave, Puck = homme dynamique. Kore etait femme, c'est pour ca que tu avais voix femme
-          VOICE = "Charon"
-          for m in ["gemini-3.8-flash-tts","gemini-3.8-flash-lite-tts","gemini-2.5-flash-preview-tts"]:
+          VOICE="Charon" # HOMME grave. Mets "Puck" pour homme jeune. "Kore" c'etait femme
+          for m in ["gemini-3.8-flash-tts","gemini-3.8-flash-lite-tts"]:
             try:
-              print(f"TTS {m} avec voix {VOICE}")
               resp = client.models.generate_content(model=m, contents=script, config=types.GenerateContentConfig(response_modalities=["AUDIO"], speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE)))))
               open("inputs/audio.wav","wb").write(resp.candidates[0].content.parts[0].inline_data.data)
-              print(f"✅ Audio homme OK avec {VOICE}")
+              print(f"Audio HOMME {VOICE} OK {os.path.getsize('inputs/audio.wav')} bytes")
               break
             except Exception as e:
-              print(e); time.sleep(10)
+              print(e); time.sleep(5)
           PY
+          ls -lh inputs/audio.wav
+          ffprobe -v error -show_entries stream=codec_name,duration -of default=noprint_wrappers=1 inputs/audio.wav
 
-      - name: 2 - Lip-sync + Voix homme
+      - name: 2 - Remplace voix origine + Lip-sync
         run: |
           pip install -q gradio_client
-          ffmpeg -y -stream_loop 10 -i inputs/video.mp4 -t 80 -c:v libx264 -pix_fmt yuv420p inputs/video_loop.mp4
+          # 1. On cree une video SANS SON ( -an = supprime ton ancienne voix )
+          ffmpeg -y -stream_loop 10 -i inputs/video.mp4 -t 80 -an -c:v libx264 -pix_fmt yuv420p inputs/video_mute.mp4
+          echo "Video mute creee, sans ancienne voix"
+          ls -lh inputs/video_mute.mp4
+
+          # 2. On colle la NOUVELLE voix homme dessus (OBLIGATOIRE, meme si lip-sync echoue)
+          ffmpeg -y -i inputs/video_mute.mp4 -i inputs/audio.wav -c:v copy -c:a aac -shortest outputs/final_voix_homme.mp4
+          echo "Video avec nouvelle voix homme creee"
+          
           python - << 'PY'
           from gradio_client import Client, handle_file
-          import shutil, os, time
+          import shutil, os
+          os.makedirs("outputs", exist_ok=True)
+          # On part deja de la video avec nouvelle voix
+          shutil.copy("outputs/final_voix_homme.mp4", "outputs/final.mp4")
 
-          # Liste de Spaces Wav2Lip qui marchent, on essaie un par un
-          spaces = ["AIGODLIKE-COM/Wav2Lip", "as-cle-bert/wav2lip", "fatchord/Wav2Lip"]
-          
-          success=False
-          for space_id in spaces:
-            try:
-              print(f"Tentative lip-sync avec {space_id}...")
-              client = Client(space_id)
-              # La plupart des Spaces Wav2Lip ont 2 inputs: video + audio
-              result = client.predict(
-                  handle_file("inputs/video_loop.mp4"),
-                  handle_file("inputs/audio.wav"),
-              )
-              print(f"Result {space_id}: {result}")
+          # Maintenant on tente le lip-sync par dessus (optionnel)
+          try:
+              print("Tentative lip-sync...")
+              client = Client("AIGODLIKE-COM/Wav2Lip")
+              result = client.predict(handle_file("inputs/video_mute.mp4"), handle_file("inputs/audio.wav"))
               video_out = result[0] if isinstance(result, list) else result
-              if isinstance(video_out, dict):
-                video_out = video_out.get("video") or video_out.get("value") or list(video_out.values())[0]
-              os.makedirs("outputs", exist_ok=True)
+              if isinstance(video_out, dict): video_out = video_out.get("video") or list(video_out.values())[0]
               shutil.copy(video_out, "outputs/final.mp4")
-              print(f"✅ Lip-sync OK avec {space_id}")
-              success=True
-              break
-            except Exception as e:
-              print(f"Echec {space_id}: {e}")
-              time.sleep(2)
-              continue
-          
-          if not success:
-            print("Tous les Spaces HS, fallback ffmpeg sans lip-sync mais avec voix homme")
-            os.system("ffmpeg -y -i inputs/video_loop.mp4 -i inputs/audio.wav -c:v copy -c:a aac -shortest outputs/final.mp4")
+              print("✅ Lip-sync OK - video avec levres qui bougent")
+          except Exception as e:
+              print(f"Lip-sync Space HS ({e}), on garde video avec voix homme sans lip-sync")
+              # final.mp4 reste = final_voix_homme.mp4 avec nouvelle voix, pas ancienne
           PY
           ls -lh outputs/
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: video-bodi-homme-lipsync
+          name: video-bodi-voix-homme
           path: |
             outputs/final.mp4
+            outputs/final_voix_homme.mp4
             script_du_jour.txt
+            inputs/audio.wav
