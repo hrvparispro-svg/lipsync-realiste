@@ -1,12 +1,12 @@
-name: Bodi - Video Auto 1min
+name: Bodi - Video 1min Final Fix
 
 on:
   workflow_dispatch:
     inputs:
       theme:
-        description: 'Theme de la video Bodi'
+        description: 'Theme Bodi'
         required: false
-        default: 'Le manager toxique qui te fait douter'
+        default: 'Le manager qui te fait douter de toi'
 
 jobs:
   video:
@@ -14,58 +14,107 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python + FFmpeg
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: 1 - Genere script + audio Bodi 3.8 TTS 1min
+      - name: 1 - Genere script + audio Bodi 3.8 TTS 1min (anti 503/429)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           THEME_INPUT: ${{ inputs.theme }}
         run: |
           sudo apt-get update -y -q
           sudo apt-get install -y -q ffmpeg
-          pip install -q google-genai pydub
-          python scripts/generate_bodi.py
+          pip install -q google-genai pydub gradio_client
+          mkdir -p inputs outputs
 
-      - name: 2 - Lip-sync local sans Space HF
-        run: |
-          pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install -q opencv-python-headless imageio ffmpeg-python huggingface_hub
-          git clone https://github.com/bytedance/LatentSync.git
-          mkdir -p LatentSync/checkpoints outputs
-          
           python - << 'PY'
-          from huggingface_hub import hf_hub_download
-          print("Telechargement poids LatentSync 1.5...")
-          hf_hub_download(repo_id="ByteDance/LatentSync", filename="latentsync_1.5.pt", local_dir="LatentSync/checkpoints")
-          # fix path
-          import os, shutil
-          src = "LatentSync/checkpoints/checkpoints/latentsync_1.5.pt"
-          dst = "LatentSync/checkpoints/latentsync_1.5.pt"
-          if os.path.exists(src):
-              shutil.move(src, dst)
-          PY
-          
-          # Audio 16k pour LatentSync + boucle video si ta video est trop courte
-          ffmpeg -i inputs/audio.wav -ar 16000 inputs/audio_16k.wav -y
-          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 inputs/audio_16k.wav > dur.txt
-          cat dur.txt
-          # Si video.mp4 fait 10s, on la boucle pour couvrir l'audio 70s
-          ffmpeg -stream_loop 10 -i inputs/video.mp4 -c copy inputs/video_loop.mp4 -y
-          
-          python LatentSync/inference.py \
-            --inference_ckpt_path LatentSync/checkpoints/latentsync_1.5.pt \
-            --video_path inputs/video_loop.mp4 \
-            --audio_path inputs/audio_16k.wav \
-            --output_path outputs/final.mp4
+          import os, time
+          from google import genai
+          from google.genai import types
 
-      - name: Upload video finale 1min
+          client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+          theme = os.environ.get("THEME_INPUT", "manager toxique")
+
+          # 1. SCRIPT 1min15
+          prompt = f"Ecris 65s, 155 mots, francais oral sur {theme}. Hook + 3 signes + validation + conseil concret. Phrases courtes, tutoiement."
+          r = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
+          script = r.text.strip()
+          print(f"SCRIPT:\n{script}")
+          open("script_du_jour.txt","w",encoding="utf-8").write(script)
+
+          # 2. TTS avec RETRY anti-503 + fallback quota
+          models = ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts", "gemini-2.5-flash-preview-tts"]
+          audio_data = None
+          for model_name in models:
+              for attempt in range(4):
+                  try:
+                      print(f"Tentative {model_name} {attempt+1}/4...")
+                      resp = client.models.generate_content(
+                          model=model_name,
+                          contents=script,
+                          config=types.GenerateContentConfig(
+                              response_modalities=["AUDIO"],
+                              speech_config=types.SpeechConfig(
+                                  voice_config=types.VoiceConfig(
+                                      prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Kore")
+                                  )
+                              )
+                          )
+                      )
+                      audio_data = resp.candidates[0].content.parts[0].inline_data.data
+                      print(f"OK avec {model_name}")
+                      break
+                  except Exception as e:
+                      print(f"-> {e}")
+                      if "503" in str(e) or "UNAVAILABLE" in str(e):
+                          time.sleep(20)
+                      elif "RESOURCE_EXHAUSTED" in str(e):
+                          break
+                      else:
+                          time.sleep(5)
+              if audio_data:
+                  break
+          
+          if not audio_data:
+              raise Exception("TTS surcharge, reessaie dans 10min")
+          
+          open("inputs/audio.wav","wb").write(audio_data)
+          print("✅ Audio 1min+ genere")
+          PY
+
+      - name: 2 - Lip-sync via Space public OFFICIEL (fix 404)
+        run: |
+          python - << 'PY'
+          from gradio_client import Client
+          import shutil, os
+          
+          # Ce Space existe vraiment, pas besoin de creer nailahrv/LatentSync
+          # C'est le Space officiel linké par ByteDance eux-memes
+          print("Connexion a fffiloni/LatentSync...")
+          client = Client("fffiloni/LatentSync")
+          
+          # Boucle ta video si elle fait 10s et audio fait 70s
+          os.system("ffmpeg -stream_loop 10 -i inputs/video.mp4 -t 80 -c copy inputs/video_loop.mp4 -y")
+          
+          result = client.predict(
+              video_path="inputs/video_loop.mp4",
+              audio_path="inputs/audio.wav",
+              api_name="/predict"
+          )
+          print(f"Result Space: {result}")
+          os.makedirs("outputs", exist_ok=True)
+          # le Space renvoie le chemin video
+          video_path = result[0] if isinstance(result, list) else result if isinstance(result, str) else result["video"]
+          shutil.copy(video_path, "outputs/final.mp4")
+          print("✅ Lip-sync OK")
+          PY
+
+      - name: Upload finale
         uses: actions/upload-artifact@v4
         with:
           name: video-bodi-1min-finale
           path: |
             outputs/final.mp4
             script_du_jour.txt
-            inputs/audio.wav
