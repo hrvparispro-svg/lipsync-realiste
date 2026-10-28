@@ -1,4 +1,4 @@
-name: Bodi - Voix Homme Garantie SANS 503
+name: Bodi - Gemini 3.8 Flash TTS Only
 
 on:
   workflow_dispatch:
@@ -17,103 +17,105 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 1 - Script + Audio HOMME garanti
+      - name: 1 - Script + Audio HOMME Gemini 3.8 Only
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           THEME_INPUT: ${{ inputs.theme }}
         run: |
           sudo apt-get update -y -q
           sudo apt-get install -y -q ffmpeg
-          pip install -q google-genai edge-tts
+          pip install -q google-genai pydub
           mkdir -p inputs outputs
-
-          # 1a - Script avec gemini flash (pas TTS, donc pas de 503)
           python - << 'PY'
-          import os
+          import os, time, re, io
           from google import genai
+          from google.genai import types
+          from google.genai import errors as genai_errors
+          from pydub import AudioSegment
+
           client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
           theme = os.environ.get("THEME_INPUT","manager toxique")
-          r = client.models.generate_content(model="gemini-3.8-flash", contents=f"Ecris 70s, 160 mots, francais oral sur {theme}. Hook + 3 signes + validation + conseil concret. Phrases courtes.")
+
+          # 1. Script avec flash (pas TTS donc pas de 503)
+          r = client.models.generate_content(model="gemini-3.8-flash", contents=f"Ecris 70s, 150 mots max, francais oral sur {theme}. Hook + 3 signes + validation + conseil. Phrases tres courtes.")
           script = r.text.strip()
           open("script_du_jour.txt","w",encoding="utf-8").write(script)
-          print(f"SCRIPT OK: {script[:120]}...")
-          PY
+          print(f"SCRIPT:\n{script}\n")
 
-          # 1b - Audio HOMME avec fallback automatique, ne plante JAMAIS avec exit 1
-          python - << 'PY'
-          import asyncio, os
+          # 2. Audio avec UNIQUEMENT gemini-3.8-flash-tts
+          sentences = re.split(r'(?<=[.!?])\s+', script)
+          mid = len(sentences)//2
+          chunks = [" ".join(sentences[:mid]), " ".join(sentences[mid:])]
+          chunks = [c for c in chunks if c.strip()]
 
-          async def gen_audio():
-              text = open("script_du_jour.txt",encoding="utf-8").read()
-              # On tente Gemini 1 seule fois, si 503 on bascule direct
-              try:
-                  from google import genai
-                  from google.genai import types
-                  client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-                  print("Tentative Gemini Charon HOMME...")
+          VOICE = "Charon" # HOMME - garde Charon, c'est ce que tu veux
+          MODELS = ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"] # 2 variantes 3.8 uniquement
+
+          full_audio = AudioSegment.empty()
+
+          for idx, chunk in enumerate(chunks):
+            print(f"\n--- Morceau {idx+1}/{len(chunks)}: {chunk[:70]}...")
+            ok = False
+            for model_name in MODELS:
+              for attempt in range(1, 21): # 20 tentatives
+                try:
+                  print(f"  [{model_name}] tentative {attempt}/20")
                   resp = client.models.generate_content(
-                      model="gemini-3.8-flash-lite-tts",
-                      contents=text,
-                      config=types.GenerateContentConfig(
-                          response_modalities=["AUDIO"],
-                          speech_config=types.SpeechConfig(
-                              voice_config=types.VoiceConfig(
-                                  prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Charon")
-                              )
-                          )
+                    model=model_name,
+                    contents=chunk,
+                    config=types.GenerateContentConfig(
+                      response_modalities=["AUDIO"],
+                      speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                          prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE)
+                        )
                       )
+                    )
                   )
-                  open("inputs/audio.wav","wb").write(resp.candidates[0].content.parts[0].inline_data.data)
-                  print("✅ Audio Gemini Charon OK")
-                  return
-              except Exception as e:
-                  print(f"Gemini 503 surcharge -> {e}")
-                  print("Bascule vers voix HOMME Edge-TTS (fr-FR-HenriNeural) qui ne fait jamais 503...")
+                  data = resp.candidates[0].content.parts[0].inline_data.data
+                  seg = AudioSegment.from_file(io.BytesIO(data))
+                  full_audio += seg + AudioSegment.silent(duration=200)
+                  print(f"  ✅ Morceau {idx+1} OK avec {model_name}")
+                  ok = True
+                  break
+                except genai_errors.ServerError as e:
+                  # C'est ton erreur ligne 715 : 503 UNAVAILABLE
+                  print(f"  -> 503 surcharge, attente 60s... (tentative {attempt})")
+                  time.sleep(60) # Google dit "Spikes are temporary"
+                  continue
+                except Exception as e:
+                  msg = str(e)
+                  if "503" in msg or "UNAVAILABLE" in msg or "RemoteProtocolError" in msg or "disconnected" in msg:
+                    print(f"  -> 503/disconnect, attente 60s...")
+                    time.sleep(60)
+                    continue
+                  print(f"  -> Autre erreur: {msg[:200]}")
+                  time.sleep(10)
+              if ok: break
+            if not ok:
+              raise Exception(f"Echec apres 20 retries sur morceau {idx+1} - Gemini toujours en surcharge")
 
-              # FALLBACK GARANTI HOMME
-              import edge_tts
-              # Henri = homme francais mature, Remy = homme jeune
-              voice = "fr-FR-HenriNeural"
-              communicate = edge_tts.Communicate(text, voice)
-              await communicate.save("inputs/audio.wav")
-              print(f"✅ Audio HOMME Edge-TTS {voice} OK")
-
-          asyncio.run(gen_audio())
+          full_audio.export("inputs/audio.wav", format="wav")
+          print(f"\n✅ AUDIO FINAL Gemini 3.8 HOMME {len(full_audio)/1000:.1f}s")
           PY
-
           ls -lh inputs/audio.wav
-          ffprobe -v error -show_entries stream=duration -of default=noprint_wrappers=1 inputs/audio.wav
 
-      - name: 2 - Video finale avec NOUVELLE voix homme (supprime ancienne)
+      - name: 2 - Lip-sync + supprime ancienne voix
         run: |
-          # -an supprime DEFINITIVEMENT ta voix d'origine
           ffmpeg -y -stream_loop 10 -i inputs/video.mp4 -t 80 -an -c:v libx264 -pix_fmt yuv420p inputs/video_mute.mp4
-          # colle nouvelle voix homme
-          ffmpeg -y -i inputs/video_mute.mp4 -i inputs/audio.wav -c:v copy -c:a aac -shortest outputs/final.mp4
-          ls -lh outputs/final.mp4
-          echo "✅ Video avec voix HOMME, sans ton ancienne voix"
-
-          # Lip-sync optionnel (ne fait plus planter)
-          pip install -q gradio_client || true
-          python - << 'PY' || true
-          from gradio_client import Client, handle_file
-          import shutil
-          try:
-              client = Client("AIGODLIKE-COM/Wav2Lip")
-              result = client.predict(handle_file("inputs/video_mute.mp4"), handle_file("inputs/audio.wav"))
-              out = result[0] if isinstance(result, list) else result
-              if isinstance(out, dict): out = out.get("video")
-              shutil.copy(out, "outputs/final_lipsync.mp4")
-              print("✅ Lip-sync OK")
-          except Exception as e:
-              print(f"Lip-sync off, mais final.mp4 a deja la voix homme: {e}")
-          PY
+          ffmpeg -y -i inputs/audio.wav -ar 16000 inputs/audio_16k.wav
+          pip install -q --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -q --no-cache-dir opencv-python-headless==4.8.1.78 librosa==0.10.1 numba==0.56.4 numpy==1.23.5
+          rm -rf Wav2Lip && git clone https://github.com/Rudrabha/Wav2Lip.git
+          cd Wav2Lip && wget -q https://github.com/Rudrabha/Wav2Lip/releases/download/v1.0.0/wav2lip_gan.pth -O wav2lip_gan.pth && cd ..
+          python Wav2Lip/inference.py --checkpoint_path Wav2Lip/wav2lip_gan.pth --face inputs/video_mute.mp4 --audio inputs/audio_16k.wav --outfile outputs/final_lipsync.mp4 --nosmooth
+          ls -lh outputs/
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: video-bodi-homme-fixe
+          name: video-gemini38-homme-lipsync
           path: |
-            outputs/
+            outputs/final_lipsync.mp4
             script_du_jour.txt
             inputs/audio.wav
